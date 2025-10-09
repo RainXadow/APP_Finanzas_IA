@@ -1,3 +1,13 @@
 <resources>
-    <string name="app_name">APP_Finanzas_IA</string>
+    <string name="app_name">Finanzas IA</string>
+    <string name="permission_notification_title">Permisos de Notificaciones</string>
+    <string name="permission_notification_message">Esta app necesita acceso a las notificaciones para detectar automáticamente pagos de Santander y Google Pay.</string>
+    <string name="export_excel">Exportar a Excel</string>
+    <string name="add_manual">Añadir Manual</string>
+    <string name="total_income">Ingresos: %s</string>
+    <string name="total_expenses">Gastos: %s</string>
+    <string name="balance">Balance: %s</string>
+    <string name="transaction_deleted">Transacción eliminada</string>
+    <string name="excel_exported">Excel exportado correctamente</string>
+    <string name="no_transactions">No hay transacciones para mostrar</string>
 </resources>
