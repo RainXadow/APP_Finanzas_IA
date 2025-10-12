@@ -1,14 +1,12 @@
 package com.example.app_finanzas_ia
 
-import android.content.BroadcastReceiver
-import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
+import android.net.Uri
 import android.os.Bundle
-import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
@@ -24,23 +22,25 @@ import java.util.*
 class MainActivity : AppCompatActivity() {
 
     private lateinit var transactionStorage: TransactionStorage
+    private lateinit var categoryManager: CategoryManager
+    private lateinit var pdfProcessor: PDFProcessor
     private lateinit var excelExporter: ExcelExporter
     private lateinit var recyclerView: RecyclerView
     private lateinit var adapter: TransactionAdapter
     private lateinit var tvTotalExpenses: TextView
     private lateinit var tvTotalIncome: TextView
     private lateinit var tvBalance: TextView
+    private lateinit var btnImportPDF: Button
     private lateinit var btnExport: Button
-    private lateinit var btnPermissions: Button
-    private lateinit var btnAddManual: Button
+    private lateinit var btnCategories: Button
 
     private val currencyFormat = NumberFormat.getCurrencyInstance(Locale("es", "ES"))
 
-    private val transactionReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            // Recargar transacciones cuando se detecta una nueva
-            loadTransactions()
-        }
+    // Selector de PDF
+    private val pdfPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let { processPDF(it) }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -50,35 +50,27 @@ class MainActivity : AppCompatActivity() {
         initializeComponents()
         setupRecyclerView()
         setupButtons()
-        checkNotificationPermission()
         loadTransactions()
-
-        // Registrar receptor para nuevas transacciones
-        val filter = IntentFilter("com.example.app_finanzas_ia.NEW_TRANSACTION")
-        registerReceiver(transactionReceiver, filter, RECEIVER_NOT_EXPORTED)
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        unregisterReceiver(transactionReceiver)
     }
 
     private fun initializeComponents() {
         transactionStorage = TransactionStorage(this)
+        categoryManager = CategoryManager(this)
+        pdfProcessor = PDFProcessor(this)
         excelExporter = ExcelExporter(this)
 
         recyclerView = findViewById(R.id.recyclerViewTransactions)
         tvTotalExpenses = findViewById(R.id.tvTotalExpenses)
         tvTotalIncome = findViewById(R.id.tvTotalIncome)
         tvBalance = findViewById(R.id.tvBalance)
+        btnImportPDF = findViewById(R.id.btnImportPDF)
         btnExport = findViewById(R.id.btnExport)
-        btnPermissions = findViewById(R.id.btnPermissions)
-        btnAddManual = findViewById(R.id.btnAddManual)
+        btnCategories = findViewById(R.id.btnCategories)
     }
 
     private fun setupRecyclerView() {
         adapter = TransactionAdapter(
-            onItemClick = { transaction -> showTransactionDetails(transaction) },
+            onItemClick = { transaction -> showCategorizationDialog(transaction) },
             onItemLongClick = { transaction -> showDeleteDialog(transaction) }
         )
 
@@ -87,17 +79,235 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupButtons() {
+        btnImportPDF.setOnClickListener {
+            pdfPickerLauncher.launch("application/pdf")
+        }
+
         btnExport.setOnClickListener {
             exportToExcel()
         }
 
-        btnPermissions.setOnClickListener {
-            requestNotificationPermission()
+        btnCategories.setOnClickListener {
+            showCategoriesManager()
+        }
+    }
+
+    private fun processPDF(uri: Uri) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@MainActivity, "Procesando PDF...", Toast.LENGTH_SHORT).show()
+                }
+
+                // Procesar PDF
+                val result = pdfProcessor.processPDF(uri)
+
+                if (!result.success) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Error: ${result.errorMessage}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                    return@launch
+                }
+
+                // Categorizar automáticamente
+                val categorizedTransactions = result.transactions.map { transaction ->
+                    val suggestedCategory = categoryManager.findCategoryForConcept(transaction.concept)
+                    transaction.copy(category = suggestedCategory ?: "Sin categoría")
+                }
+
+                // Guardar transacciones
+                val (added, duplicates) = transactionStorage.saveTransactions(categorizedTransactions)
+
+                // Contar sin categorizar
+                val uncategorizedCount = categorizedTransactions.count { it.category == "Sin categoría" }
+
+                withContext(Dispatchers.Main) {
+                    loadTransactions()
+
+                    val message = buildString {
+                        append("PDF procesado correctamente\n\n")
+                        append("✅ Nuevas: $added\n")
+                        if (duplicates > 0) {
+                            append("⚠️ Duplicadas (ignoradas): $duplicates\n")
+                        }
+
+                        if (uncategorizedCount > 0) {
+                            append("\n📋 $uncategorizedCount sin categorizar")
+                        }
+                    }
+
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("Importación Completada")
+                        .setMessage(message)
+                        .setPositiveButton("OK") { _, _ ->
+                            // Mostrar transacciones sin categorizar
+                            if (uncategorizedCount > 0) {
+                                categorizePendingTransactions()
+                            }
+                        }
+                        .show()
+                }
+
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Error: ${e.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    private fun categorizePendingTransactions() {
+        val uncategorized = transactionStorage.getUncategorizedTransactions()
+        if (uncategorized.isEmpty()) {
+            Toast.makeText(this, "No hay transacciones pendientes", Toast.LENGTH_SHORT).show()
+            return
         }
 
-        btnAddManual.setOnClickListener {
-            showAddManualTransactionDialog()
+        var currentIndex = 0
+
+        fun showNextTransaction() {
+            if (currentIndex >= uncategorized.size) {
+                Toast.makeText(this, "¡Categorización completada!", Toast.LENGTH_SHORT).show()
+                loadTransactions()
+                return
+            }
+
+            val transaction = uncategorized[currentIndex]
+            showCategorizationDialog(transaction) {
+                currentIndex++
+                showNextTransaction()
+            }
         }
+
+        showNextTransaction()
+    }
+
+    private fun showCategorizationDialog(transaction: Transaction, onComplete: (() -> Unit)? = null) {
+        val categories = categoryManager.getAllCategories().map { it.name }.toTypedArray()
+
+        AlertDialog.Builder(this)
+            .setTitle("Categorizar: ${transaction.concept}")
+            .setMessage("Importe: ${currencyFormat.format(transaction.amount)}\nCategoría actual: ${transaction.category}")
+            .setItems(categories) { _, which ->
+                val selectedCategory = categories[which]
+
+                // Actualizar transacción
+                transactionStorage.updateTransactionCategory(transaction.id, selectedCategory)
+
+                // Guardar regla para futuras transacciones
+                categoryManager.saveRule(transaction.concept, selectedCategory)
+
+                Toast.makeText(this, "Categoría actualizada", Toast.LENGTH_SHORT).show()
+                loadTransactions()
+                onComplete?.invoke()
+            }
+            .setNeutralButton("Nueva Categoría") { _, _ ->
+                showAddCategoryDialog { newCategory ->
+                    transactionStorage.updateTransactionCategory(transaction.id, newCategory)
+                    categoryManager.saveRule(transaction.concept, newCategory)
+                    Toast.makeText(this, "Categoría creada y asignada", Toast.LENGTH_SHORT).show()
+                    loadTransactions()
+                    onComplete?.invoke()
+                }
+            }
+            .setNegativeButton("Cancelar") { _, _ ->
+                onComplete?.invoke()
+            }
+            .show()
+    }
+
+    private fun showAddCategoryDialog(onCategoryCreated: (String) -> Unit) {
+        val input = android.widget.EditText(this)
+        input.hint = "Nombre de la categoría"
+
+        AlertDialog.Builder(this)
+            .setTitle("Nueva Categoría")
+            .setView(input)
+            .setPositiveButton("Crear") { _, _ ->
+                val categoryName = input.text.toString().trim()
+                if (categoryName.isNotEmpty()) {
+                    categoryManager.addCategory(categoryName)
+                    onCategoryCreated(categoryName)
+                } else {
+                    Toast.makeText(this, "El nombre no puede estar vacío", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    private fun showCategoriesManager() {
+        val categories = categoryManager.getAllCategories()
+        val categoryNames = categories.map { it.name }.toTypedArray()
+
+        AlertDialog.Builder(this)
+            .setTitle("Gestión de Categorías")
+            .setItems(categoryNames) { _, which ->
+                val category = categories[which]
+                showCategoryOptions(category)
+            }
+            .setPositiveButton("Nueva Categoría") { _, _ ->
+                showAddCategoryDialog {
+                    Toast.makeText(this, "Categoría '$it' creada", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("Cerrar", null)
+            .show()
+    }
+
+    private fun showCategoryOptions(category: Category) {
+        val transactionCount = transactionStorage.getTransactionsByCategory(category.name).size
+
+        val message = buildString {
+            append("Categoría: ${category.name}\n")
+            append("Transacciones: $transactionCount\n")
+            if (category.isDefault) {
+                append("\n(Categoría predeterminada)")
+            }
+        }
+
+        val builder = AlertDialog.Builder(this)
+            .setTitle("Opciones de Categoría")
+            .setMessage(message)
+
+        if (!category.isDefault) {
+            builder.setPositiveButton("Eliminar") { _, _ ->
+                showDeleteCategoryConfirmation(category)
+            }
+        }
+
+        builder.setNegativeButton("Cerrar", null)
+            .show()
+    }
+
+    private fun showDeleteCategoryConfirmation(category: Category) {
+        val transactionCount = transactionStorage.getTransactionsByCategory(category.name).size
+
+        AlertDialog.Builder(this)
+            .setTitle("Eliminar Categoría")
+            .setMessage("¿Eliminar '${category.name}'?\n\n$transactionCount transacciones serán marcadas como 'Sin categoría'")
+            .setPositiveButton("Eliminar") { _, _ ->
+                // Reasignar transacciones
+                val transactions = transactionStorage.getTransactionsByCategory(category.name)
+                transactions.forEach {
+                    transactionStorage.updateTransactionCategory(it.id, "Sin categoría")
+                }
+
+                // Eliminar categoría
+                categoryManager.deleteCategory(category.name)
+                Toast.makeText(this, "Categoría eliminada", Toast.LENGTH_SHORT).show()
+                loadTransactions()
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
     }
 
     private fun loadTransactions() {
@@ -119,7 +329,6 @@ class MainActivity : AppCompatActivity() {
         val balance = stats.totalIncome - stats.totalExpenses
         tvBalance.text = "Balance: ${currencyFormat.format(balance)}"
 
-        // Cambiar color según el balance
         tvBalance.setTextColor(
             if (balance >= 0)
                 getColor(android.R.color.holo_green_dark)
@@ -147,7 +356,6 @@ class MainActivity : AppCompatActivity() {
                 val file = excelExporter.exportToExcel(transactions)
 
                 withContext(Dispatchers.Main) {
-                    // Compartir el archivo Excel
                     val uri = FileProvider.getUriForFile(
                         this@MainActivity,
                         "${packageName}.fileprovider",
@@ -180,72 +388,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun checkNotificationPermission() {
-        val enabled = Settings.Secure.getString(
-            contentResolver,
-            "enabled_notification_listeners"
-        )?.contains(packageName) ?: false
-
-        btnPermissions.isEnabled = !enabled
-
-        if (!enabled) {
-            btnPermissions.text = "Activar Permisos"
-            showPermissionAlert()
-        } else {
-            btnPermissions.text = "Permisos Activos ✓"
-        }
-    }
-
-    private fun requestNotificationPermission() {
-        val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-        startActivity(intent)
-    }
-
-    private fun showPermissionAlert() {
-        AlertDialog.Builder(this)
-            .setTitle("Permisos Necesarios")
-            .setMessage("Para capturar notificaciones de pagos automáticamente, " +
-                    "necesitas activar los permisos de acceso a notificaciones.\n\n" +
-                    "Busca 'APP_Finanzas_IA' en la lista y actívalo.")
-            .setPositiveButton("Ir a Configuración") { _, _ ->
-                requestNotificationPermission()
-            }
-            .setNegativeButton("Más tarde", null)
-            .show()
-    }
-
-    private fun showTransactionDetails(transaction: Transaction) {
-        val details = """
-            Fecha: ${transaction.date}
-            Concepto: ${transaction.concept}
-            Categoría: ${transaction.category}
-            Importe: ${currencyFormat.format(transaction.amount)}
-            Fuente: ${transaction.source}
-            Tipo: ${when(transaction.type) {
-            TransactionType.INCOME -> "Ingreso"
-            TransactionType.EXPENSE -> "Gasto"
-            TransactionType.UNKNOWN -> "Desconocido"
-        }}
-            
-            Texto original:
-            ${transaction.originalNotificationText}
-        """.trimIndent()
-
-        AlertDialog.Builder(this)
-            .setTitle("Detalles de Transacción")
-            .setMessage(details)
-            .setPositiveButton("OK", null)
-            .setNeutralButton("Editar") { _, _ ->
-                // TODO: Implementar edición
-                Toast.makeText(this, "Función en desarrollo", Toast.LENGTH_SHORT).show()
-            }
-            .show()
-    }
-
     private fun showDeleteDialog(transaction: Transaction) {
         AlertDialog.Builder(this)
             .setTitle("Eliminar Transacción")
-            .setMessage("¿Estás seguro de que quieres eliminar esta transacción?")
+            .setMessage("¿Estás seguro de que quieres eliminar esta transacción?\n\n${transaction.concept}\n${currencyFormat.format(transaction.amount)}")
             .setPositiveButton("Eliminar") { _, _ ->
                 transactionStorage.deleteTransaction(transaction.id)
                 loadTransactions()
@@ -253,10 +399,5 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("Cancelar", null)
             .show()
-    }
-
-    private fun showAddManualTransactionDialog() {
-        // TODO: Implementar diálogo para añadir transacción manual
-        Toast.makeText(this, "Función en desarrollo", Toast.LENGTH_SHORT).show()
     }
 }

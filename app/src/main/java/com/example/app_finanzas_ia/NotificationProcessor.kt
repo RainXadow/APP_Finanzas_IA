@@ -3,37 +3,47 @@ package com.example.app_finanzas_ia
 import android.content.Context
 import java.util.*
 
+/**
+ * NOTA: Esta clase ya no se usa en la versión actual (basada en PDFs)
+ * Se mantiene por compatibilidad pero puede ser eliminada
+ */
 class NotificationProcessor(private val context: Context) {
 
     // Patrones de expresiones regulares para extraer información
     private val amountPatterns = listOf(
-        Regex("""(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})\s*€"""),  // 1.234,56 €
-        Regex("""€\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})"""),  // € 1.234,56
-        Regex("""(\d+[.,]\d{2})\s*EUR"""),                   // 123,45 EUR
-        Regex("""(\d+[.,]\d{2})\s*euros?"""),                // 123,45 euros
+        Regex("""(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})\s*€"""),          // 1.234,56 €
+        Regex("""€\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})"""),          // € 1.234,56
+        Regex("""(\d+[.,]\d{2})\s*EUR""", RegexOption.IGNORE_CASE), // 123,45 EUR
+        Regex("""(\d+[.,]\d{2})\s*euros?""", RegexOption.IGNORE_CASE), // 123,45 euros
+        Regex("""(\d+[.,]\d{2})EUR""", RegexOption.IGNORE_CASE),    // 11,49EUR (sin espacio)
+        Regex("""BIZUM de (\d+[.,]\d{2}) EUR""", RegexOption.IGNORE_CASE), // Bizum Santander
+        Regex("""de efectivo de (\d+[.,]\d{2})EUR""", RegexOption.IGNORE_CASE), // Retiradas cajero
+        Regex("""ingreso de efectivo de (\d+[.,]\d{2})EUR""", RegexOption.IGNORE_CASE), // Ingresos cajero
     )
 
     private val chargeKeywords = listOf(
         "cargo", "pago", "compra", "débito", "retirada",
-        "domiciliación", "transferencia enviada"
+        "domiciliación", "transferencia enviada", "con mastercard",
+        "con visa", "retirada de efectivo"
     )
 
     private val incomeKeywords = listOf(
-        "abono", "ingreso", "transferencia recibida", "devolución"
+        "abono", "ingreso", "transferencia recibida", "devolución",
+        "has recibido", "ingreso de efectivo", "bizum"
     )
 
     fun processNotification(
         notificationText: String,
         packageName: String
-    ): NotificationProcessResult {
+    ): PDFProcessResult {
 
         try {
             // Extraer cantidad
             val amount = extractAmount(notificationText)
             if (amount == null) {
-                return NotificationProcessResult(
+                return PDFProcessResult(
                     success = false,
-                    transaction = null,
+                    transactions = emptyList(),
                     errorMessage = "No se pudo extraer la cantidad"
                 )
             }
@@ -47,35 +57,33 @@ class NotificationProcessor(private val context: Context) {
             // Determinar fuente
             val source = when {
                 packageName.contains("santander") -> "Santander"
-                packageName.contains("google") -> "Google Pay"
+                packageName.contains("google") || packageName.contains("wallet") -> "Google Wallet"
                 packageName.contains("bbva") -> "BBVA"
                 else -> "Desconocido"
             }
-
-            // Categorizar automáticamente
-            val category = categorizeTransaction(concept, notificationText)
 
             // Crear transacción
             val transaction = Transaction(
                 date = Date(),
                 amount = if (type == TransactionType.EXPENSE) -amount else amount,
                 concept = concept,
-                category = category,
+                category = "Sin categoría",
                 source = source,
                 type = type,
-                originalNotificationText = notificationText,
+                originalText = notificationText,
                 isManual = false
             )
 
-            return NotificationProcessResult(
+            return PDFProcessResult(
                 success = true,
-                transaction = transaction
+                transactions = listOf(transaction),
+                newTransactions = 1
             )
 
         } catch (e: Exception) {
-            return NotificationProcessResult(
+            return PDFProcessResult(
                 success = false,
-                transaction = null,
+                transactions = emptyList(),
                 errorMessage = e.message
             )
         }
@@ -111,6 +119,45 @@ class NotificationProcessor(private val context: Context) {
     }
 
     private fun extractConcept(text: String): String {
+        val lowerText = text.lowercase()
+
+        // Caso especial: Google Wallet / Google Pay
+        if (lowerText.contains("con mastercard") || lowerText.contains("con visa")) {
+            val lines = text.split("\n")
+            if (lines.isNotEmpty()) {
+                for (line in lines) {
+                    if (!line.contains("€") && !line.contains("EUR") &&
+                        !line.contains("mastercard", ignoreCase = true) &&
+                        !line.contains("visa", ignoreCase = true) &&
+                        line.trim().isNotEmpty()) {
+                        return line.trim().take(50)
+                    }
+                }
+            }
+            return "Compra con tarjeta"
+        }
+
+        // Caso especial: BIZUM
+        if (lowerText.contains("bizum")) {
+            val match = Regex("""de ([A-Z\s.]+) por Pagos""", RegexOption.IGNORE_CASE).find(text)
+            if (match != null) {
+                return "Bizum de ${match.groupValues[1].trim()}"
+            }
+            return "Bizum"
+        }
+
+        // Caso especial: Cajero automático
+        if (lowerText.contains("cajero")) {
+            val match = Regex("""cajero (\d+\.\d+\.\d+\.\d+)""", RegexOption.IGNORE_CASE).find(text)
+            if (match != null) {
+                return "Cajero ${match.groupValues[1]}"
+            }
+            if (lowerText.contains("ingreso")) {
+                return "Ingreso en cajero"
+            }
+            return "Retirada en cajero"
+        }
+
         // Intentar extraer el concepto de la notificación
         val lines = text.split("\n")
 
@@ -122,9 +169,9 @@ class NotificationProcessor(private val context: Context) {
                     return parts[1].trim().take(50)
                 }
             }
-            if (line.contains(" de ", ignoreCase = true)) {
+            if (line.contains(" de ", ignoreCase = true) && !line.contains("€") && !line.contains("EUR")) {
                 val parts = line.split(" de ", ignoreCase = true)
-                if (parts.size > 1) {
+                if (parts.size > 1 && !parts[1].trim().matches(Regex("""\d+[.,]\d+.*"""))) {
                     return parts[1].trim().take(50)
                 }
             }
@@ -135,48 +182,6 @@ class NotificationProcessor(private val context: Context) {
             lines[1].trim().take(50)
         } else {
             lines[0].trim().take(50)
-        }
-    }
-
-    private fun categorizeTransaction(concept: String, fullText: String): String {
-        val lowerConcept = concept.lowercase()
-        val lowerText = fullText.lowercase()
-
-        return when {
-            // Alimentación
-            lowerConcept.contains("mercadona") ||
-                    lowerConcept.contains("carrefour") ||
-                    lowerConcept.contains("supermercado") ||
-                    lowerConcept.contains("lidl") ||
-                    lowerConcept.contains("aldi") -> "Alimentación"
-
-            // Restaurantes
-            lowerConcept.contains("restaurante") ||
-                    lowerConcept.contains("bar") ||
-                    lowerText.contains("comida") -> "Restaurantes"
-
-            // Transporte
-            lowerConcept.contains("gasolina") ||
-                    lowerConcept.contains("repsol") ||
-                    lowerConcept.contains("cepsa") ||
-                    lowerConcept.contains("uber") ||
-                    lowerConcept.contains("cabify") ||
-                    lowerConcept.contains("renfe") -> "Transporte"
-
-            // Ocio
-            lowerConcept.contains("cine") ||
-                    lowerConcept.contains("spotify") ||
-                    lowerConcept.contains("netflix") ||
-                    lowerConcept.contains("amazon") -> "Ocio"
-
-            // Servicios
-            lowerText.contains("recibo") ||
-                    lowerText.contains("domiciliación") -> "Servicios"
-
-            // Transferencias
-            lowerText.contains("transferencia") -> "Transferencias"
-
-            else -> "Otros"
         }
     }
 }

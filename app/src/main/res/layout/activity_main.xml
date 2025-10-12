@@ -75,20 +75,19 @@
         android:layout_marginBottom="16dp">
 
         <Button
-            android:id="@+id/btnPermissions"
+            android:id="@+id/btnImportPDF"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Permisos"
-            android:layout_marginEnd="8dp"
-            style="@style/Widget.Material3.Button.OutlinedButton" />
+            android:text="📄 Importar PDF"
+            android:layout_marginEnd="8dp" />
 
         <Button
-            android:id="@+id/btnAddManual"
+            android:id="@+id/btnCategories"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="+ Manual"
+            android:text="🏷️ Categorías"
             style="@style/Widget.Material3.Button.OutlinedButton" />
 
     </LinearLayout>

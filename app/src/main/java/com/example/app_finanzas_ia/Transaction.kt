@@ -11,17 +11,46 @@ data class Transaction(
     val amount: Double,
     val concept: String,
     val category: String = "Sin categoría",
-    val source: String, // "Santander", "Google Pay", etc.
+    val source: String = "PDF Santander",
     val type: TransactionType,
-    val originalNotificationText: String,
+    val balance: Double = 0.0, // Saldo después de la transacción
+    val originalText: String = "",
     val isManual: Boolean = false
-)
+) {
+    /**
+     * Genera una clave única para detectar duplicados
+     */
+    fun getUniqueKey(): String {
+        val dateStr = date.time.toString()
+        val amountStr = String.format("%.2f", amount)
+        return "$dateStr-${concept.take(30)}-$amountStr"
+    }
+}
 
 enum class TransactionType {
     INCOME,     // Ingreso
     EXPENSE,    // Gasto
     UNKNOWN     // Desconocido
 }
+
+/**
+ * Categoría personalizada por el usuario
+ */
+data class Category(
+    val id: Long = System.currentTimeMillis(),
+    val name: String,
+    val keywords: MutableSet<String> = mutableSetOf(), // Palabras clave asociadas
+    val isDefault: Boolean = false
+)
+
+/**
+ * Regla de categorización automática
+ */
+data class CategorizationRule(
+    val concept: String, // Concepto normalizado
+    val categoryName: String,
+    val lastUsed: Date = Date()
+)
 
 /**
  * Clase para almacenar configuración de exportación Excel
@@ -35,10 +64,12 @@ data class ExcelConfig(
 )
 
 /**
- * Clase para el resultado del procesamiento de notificación
+ * Clase para el resultado del procesamiento de PDF
  */
-data class NotificationProcessResult(
+data class PDFProcessResult(
     val success: Boolean,
-    val transaction: Transaction?,
+    val transactions: List<Transaction> = emptyList(),
+    val duplicatesFound: Int = 0,
+    val newTransactions: Int = 0,
     val errorMessage: String? = null
 )

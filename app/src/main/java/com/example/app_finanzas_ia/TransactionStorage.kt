@@ -6,18 +6,44 @@ import com.google.gson.reflect.TypeToken
 import java.io.File
 
 /**
- * Clase para almacenar y recuperar transacciones
- * Usa archivos JSON para simplicidad (se puede migrar a Room Database)
+ * Clase para almacenar y recuperar transacciones con detección de duplicados
  */
 class TransactionStorage(private val context: Context) {
 
     private val gson = Gson()
     private val fileName = "transactions.json"
 
+    /**
+     * Guarda transacciones evitando duplicados
+     */
+    fun saveTransactions(newTransactions: List<Transaction>): Pair<Int, Int> {
+        val existingTransactions = getAllTransactions().toMutableList()
+        val existingKeys = existingTransactions.map { it.getUniqueKey() }.toSet()
+
+        var addedCount = 0
+        var duplicateCount = 0
+
+        for (transaction in newTransactions) {
+            if (!existingKeys.contains(transaction.getUniqueKey())) {
+                existingTransactions.add(transaction)
+                addedCount++
+            } else {
+                duplicateCount++
+            }
+        }
+
+        saveAllTransactions(existingTransactions)
+        return Pair(addedCount, duplicateCount)
+    }
+
     fun saveTransaction(transaction: Transaction) {
         val transactions = getAllTransactions().toMutableList()
-        transactions.add(transaction)
-        saveAllTransactions(transactions)
+        val existingKeys = transactions.map { it.getUniqueKey() }
+
+        if (!existingKeys.contains(transaction.getUniqueKey())) {
+            transactions.add(transaction)
+            saveAllTransactions(transactions)
+        }
     }
 
     fun getAllTransactions(): List<Transaction> {
@@ -52,6 +78,29 @@ class TransactionStorage(private val context: Context) {
         }
     }
 
+    /**
+     * Actualiza la categoría de una transacción
+     */
+    fun updateTransactionCategory(transactionId: Long, newCategory: String) {
+        val transactions = getAllTransactions().toMutableList()
+        val index = transactions.indexOfFirst { it.id == transactionId }
+
+        if (index != -1) {
+            val transaction = transactions[index]
+            transactions[index] = transaction.copy(category = newCategory)
+            saveAllTransactions(transactions)
+        }
+    }
+
+    /**
+     * Obtiene transacciones sin categorizar
+     */
+    fun getUncategorizedTransactions(): List<Transaction> {
+        return getAllTransactions().filter {
+            it.category == "Sin categoría" || it.category.isEmpty()
+        }
+    }
+
     fun getTransactionsByDateRange(startDate: Long, endDate: Long): List<Transaction> {
         return getAllTransactions().filter {
             it.date.time in startDate..endDate
@@ -81,7 +130,7 @@ class TransactionStorage(private val context: Context) {
 
         return TransactionStatistics(
             totalExpenses = expenses.sumOf { kotlin.math.abs(it.amount) },
-            totalIncome = income.sumOf { it.amount },
+            totalIncome = income.sumOf { kotlin.math.abs(it.amount) },
             transactionCount = transactions.size,
             expenseCount = expenses.size,
             incomeCount = income.size,

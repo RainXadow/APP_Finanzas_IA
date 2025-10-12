@@ -48,6 +48,7 @@ class NotificationListenerService : NotificationListenerService() {
     private fun processNotification(sbn: StatusBarNotification) {
         val notification = sbn.notification
         val extras = notification.extras
+        
 
         // Extraer texto de la notificación
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
@@ -66,14 +67,14 @@ class NotificationListenerService : NotificationListenerService() {
                     sbn.packageName
                 )
 
-                if (result.success && result.transaction != null) {
+                if (result.success && result.transactions != null) {
                     // Guardar transacción
-                    transactionStorage.saveTransaction(result.transaction)
+                    transactionStorage.saveTransaction(result.transactions.first())
 
                     // Notificar a la app principal
                     sendBroadcast(Intent("com.example.app_finanzas_ia.NEW_TRANSACTION"))
 
-                    Log.d(TAG, "Transacción guardada: ${result.transaction}")
+                    Log.d(TAG, "Transacción guardada: ${result.transactions.first()}")
                 } else {
                     Log.w(TAG, "No se pudo procesar la notificación: ${result.errorMessage}")
                 }
