@@ -64,12 +64,16 @@ data class ExcelConfig(
 )
 
 /**
- * Clase para el resultado del procesamiento de PDF
+ * Clase para el resultado del procesamiento de archivos (Excel, CSV, PDF)
  */
-data class PDFProcessResult(
+data class FileProcessResult(
     val success: Boolean,
     val transactions: List<Transaction> = emptyList(),
     val duplicatesFound: Int = 0,
     val newTransactions: Int = 0,
     val errorMessage: String? = null
 )
+
+// Alias para mantener compatibilidad
+typealias PDFProcessResult = FileProcessResult
+typealias ExcelProcessResult = FileProcessResult

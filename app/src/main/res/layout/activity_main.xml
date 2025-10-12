@@ -75,11 +75,11 @@
         android:layout_marginBottom="16dp">
 
         <Button
-            android:id="@+id/btnImportPDF"
+            android:id="@+id/btnImportExcel"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="📄 Importar PDF"
+            android:text="📊 Importar Excel/CSV"
             android:layout_marginEnd="8dp" />
 
         <Button

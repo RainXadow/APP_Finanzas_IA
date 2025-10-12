@@ -69,13 +69,18 @@ dependencies {
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("androidx.cardview:cardview:1.0.0")
 
-    // Apache POI para Excel y PDF
+    // Apache POI para Excel (lectura y escritura)
     implementation("org.apache.poi:poi:5.2.3")
     implementation("org.apache.poi:poi-ooxml:5.2.3")
 
-    // Apache PDFBox para leer PDFs
-    implementation("org.apache.pdfbox:pdfbox:2.0.27")
-    implementation("org.apache.pdfbox:fontbox:2.0.27")
+    // Dependencias adicionales de POI
+    implementation("org.apache.xmlbeans:xmlbeans:5.1.1")
+    implementation("org.apache.commons:commons-compress:1.21")
+    implementation("commons-io:commons-io:2.11.0")
+    implementation("org.apache.commons:commons-collections4:4.4")
+
+    // OpenCSV para archivos CSV
+    implementation("com.opencsv:opencsv:5.7.1")
 
     // Dependencias adicionales de POI
     implementation("org.apache.xmlbeans:xmlbeans:5.1.1")

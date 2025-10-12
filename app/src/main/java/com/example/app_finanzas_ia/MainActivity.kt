@@ -23,24 +23,24 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var transactionStorage: TransactionStorage
     private lateinit var categoryManager: CategoryManager
-    private lateinit var pdfProcessor: PDFProcessor
+    private lateinit var excelProcessor: ExcelProcessor
     private lateinit var excelExporter: ExcelExporter
     private lateinit var recyclerView: RecyclerView
     private lateinit var adapter: TransactionAdapter
     private lateinit var tvTotalExpenses: TextView
     private lateinit var tvTotalIncome: TextView
     private lateinit var tvBalance: TextView
-    private lateinit var btnImportPDF: Button
+    private lateinit var btnImportExcel: Button
     private lateinit var btnExport: Button
     private lateinit var btnCategories: Button
 
     private val currencyFormat = NumberFormat.getCurrencyInstance(Locale("es", "ES"))
 
-    // Selector de PDF
-    private val pdfPickerLauncher = registerForActivityResult(
+    // Selector de Excel
+    private val excelPickerLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
-        uri?.let { processPDF(it) }
+        uri?.let { processExcel(it) }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -56,14 +56,14 @@ class MainActivity : AppCompatActivity() {
     private fun initializeComponents() {
         transactionStorage = TransactionStorage(this)
         categoryManager = CategoryManager(this)
-        pdfProcessor = PDFProcessor(this)
+        excelProcessor = ExcelProcessor(this)
         excelExporter = ExcelExporter(this)
 
         recyclerView = findViewById(R.id.recyclerViewTransactions)
         tvTotalExpenses = findViewById(R.id.tvTotalExpenses)
         tvTotalIncome = findViewById(R.id.tvTotalIncome)
         tvBalance = findViewById(R.id.tvBalance)
-        btnImportPDF = findViewById(R.id.btnImportPDF)
+        btnImportExcel = findViewById(R.id.btnImportExcel)
         btnExport = findViewById(R.id.btnExport)
         btnCategories = findViewById(R.id.btnCategories)
     }
@@ -79,9 +79,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupButtons() {
-        btnImportPDF.setOnClickListener {
-            pdfPickerLauncher.launch("application/pdf")
+        btnImportExcel.setOnClickListener {
+            excelPickerLauncher.launch("*/*")
         }
+
 
         btnExport.setOnClickListener {
             exportToExcel()
@@ -92,15 +93,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun processPDF(uri: Uri) {
+    private fun processExcel(uri: Uri) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MainActivity, "Procesando PDF...", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "Procesando Excel...", Toast.LENGTH_SHORT).show()
                 }
 
-                // Procesar PDF
-                val result = pdfProcessor.processPDF(uri)
+                // Procesar Excel
+                val result = excelProcessor.processExcel(uri)
 
                 if (!result.success) {
                     withContext(Dispatchers.Main) {
@@ -129,7 +130,7 @@ class MainActivity : AppCompatActivity() {
                     loadTransactions()
 
                     val message = buildString {
-                        append("PDF procesado correctamente\n\n")
+                        append("Excel procesado correctamente\n\n")
                         append("✅ Nuevas: $added\n")
                         if (duplicates > 0) {
                             append("⚠️ Duplicadas (ignoradas): $duplicates\n")
