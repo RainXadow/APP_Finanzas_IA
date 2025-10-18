@@ -45,8 +45,12 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:textSize="12sp"
-                    android:textColor="#666666"
+                    android:textColor="#FFFFFF"
+                    android:background="#2196F3"
+                    android:paddingHorizontal="8dp"
+                    android:paddingVertical="4dp"
                     android:layout_marginTop="4dp"
+                    android:textStyle="bold"
                     tools:text="Alimentación" />
 
             </LinearLayout>

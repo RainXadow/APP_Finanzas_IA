@@ -202,14 +202,32 @@ class ExcelProcessor(private val context: Context) {
             android.util.Log.d("ExcelMap", "Columna $cellIndex: '$header'")
 
             when {
-                header.contains("Fecha operación") -> mapping["fecha"] = cellIndex
-                header.contains("Concepto") || header.contains("descripcion") ||
-                        header.contains("Operación") -> mapping["concepto"] = cellIndex
-                header.contains("Importe") || header.contains("cantidad") ||
-                        header.contains("monto") -> mapping["importe"] = cellIndex
-                header.contains("Saldo") -> mapping["saldo"] = cellIndex
-                header.contains("tipo") -> mapping["tipo"] = cellIndex
-                header.contains("categoria") || header.contains("categoría") -> mapping["categoria"] = cellIndex
+                header.contains("fecha operación") -> {
+                    mapping["fecha"] = cellIndex
+                    android.util.Log.d("ExcelMap", "Mapeado 'fecha' en columna $cellIndex")
+                }
+                header.contains("concepto") || header.contains("descripcion") ||
+                        header.contains("operación") -> {
+                    mapping["concepto"] = cellIndex
+                    android.util.Log.d("ExcelMap", "Mapeado 'concepto' en columna $cellIndex")
+                }
+                header.contains("importe") || header.contains("cantidad") ||
+                        header.contains("monto") -> {
+                    mapping["importe"] = cellIndex
+                    android.util.Log.d("ExcelMap", "Mapeado 'importe' en columna $cellIndex")
+                }
+                header.contains("saldo") -> {
+                    mapping["saldo"] = cellIndex
+                    android.util.Log.d("ExcelMap", "Mapeado 'saldo' en columna $cellIndex")
+                }
+                header.contains("tipo") -> {
+                    mapping["tipo"] = cellIndex
+                    android.util.Log.d("ExcelMap", "Mapeado 'tipo' en columna $cellIndex")
+                }
+                header.contains("categoria") || header.contains("categoría") -> {
+                    mapping["categoria"] = cellIndex
+                    android.util.Log.d("ExcelMap", "Mapeado 'categoria' en columna $cellIndex")
+                }
             }
         }
 

@@ -17,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.NumberFormat
+import java.text.SimpleDateFormat
 import java.util.*
 
 class MainActivity : AppCompatActivity() {
@@ -32,9 +33,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvBalance: TextView
     private lateinit var btnImportExcel: Button
     private lateinit var btnExport: Button
-    private lateinit var btnCategories: Button
+    private lateinit var btnStatistics: Button
+    private lateinit var btnFilterUncategorized: Button
 
     private val currencyFormat = NumberFormat.getCurrencyInstance(Locale("es", "ES"))
+    private var showingUncategorizedOnly = false
 
     // Selector de Excel
     private val excelPickerLauncher = registerForActivityResult(
@@ -53,6 +56,12 @@ class MainActivity : AppCompatActivity() {
         loadTransactions()
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Recargar al volver de la pantalla de estadísticas
+        loadTransactions()
+    }
+
     private fun initializeComponents() {
         transactionStorage = TransactionStorage(this)
         categoryManager = CategoryManager(this)
@@ -65,7 +74,8 @@ class MainActivity : AppCompatActivity() {
         tvBalance = findViewById(R.id.tvBalance)
         btnImportExcel = findViewById(R.id.btnImportExcel)
         btnExport = findViewById(R.id.btnExport)
-        btnCategories = findViewById(R.id.btnCategories)
+        btnStatistics = findViewById(R.id.btnStatistics)
+        btnFilterUncategorized = findViewById(R.id.btnFilterUncategorized)
     }
 
     private fun setupRecyclerView() {
@@ -83,13 +93,52 @@ class MainActivity : AppCompatActivity() {
             excelPickerLauncher.launch("*/*")
         }
 
-
         btnExport.setOnClickListener {
             exportToExcel()
         }
 
-        btnCategories.setOnClickListener {
-            showCategoriesManager()
+        btnStatistics.setOnClickListener {
+            // Abrir actividad de estadísticas
+            val intent = Intent(this, StatisticsActivity::class.java)
+            startActivity(intent)
+        }
+
+        btnFilterUncategorized.setOnClickListener {
+            toggleUncategorizedFilter()
+        }
+    }
+
+    private fun toggleUncategorizedFilter() {
+        showingUncategorizedOnly = !showingUncategorizedOnly
+
+        if (showingUncategorizedOnly) {
+            btnFilterUncategorized.text = "📋 Mostrar Todas"
+            loadUncategorizedTransactions()
+        } else {
+            btnFilterUncategorized.text = "🔍 Sin Categoría"
+            loadTransactions()
+        }
+    }
+
+    private fun loadUncategorizedTransactions() {
+        CoroutineScope(Dispatchers.IO).launch {
+            val transactions = transactionStorage.getUncategorizedTransactions()
+            val statistics = transactionStorage.getStatistics()
+
+            withContext(Dispatchers.Main) {
+                adapter.updateTransactions(transactions)
+                updateStatistics(statistics)
+
+                if (transactions.isEmpty()) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "✅ Todas las transacciones están categorizadas",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    showingUncategorizedOnly = false
+                    btnFilterUncategorized.text = "🔍 Sin Categoría"
+                }
+            }
         }
     }
 
@@ -138,18 +187,14 @@ class MainActivity : AppCompatActivity() {
 
                         if (uncategorizedCount > 0) {
                             append("\n📋 $uncategorizedCount sin categorizar")
+                            append("\n\nPulsa '🔍 Sin Categoría' para verlas")
                         }
                     }
 
                     AlertDialog.Builder(this@MainActivity)
                         .setTitle("Importación Completada")
                         .setMessage(message)
-                        .setPositiveButton("OK") { _, _ ->
-                            // Mostrar transacciones sin categorizar
-                            if (uncategorizedCount > 0) {
-                                categorizePendingTransactions()
-                            }
-                        }
+                        .setPositiveButton("OK", null)
                         .show()
                 }
 
@@ -165,63 +210,225 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun categorizePendingTransactions() {
-        val uncategorized = transactionStorage.getUncategorizedTransactions()
-        if (uncategorized.isEmpty()) {
-            Toast.makeText(this, "No hay transacciones pendientes", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        var currentIndex = 0
-
-        fun showNextTransaction() {
-            if (currentIndex >= uncategorized.size) {
-                Toast.makeText(this, "¡Categorización completada!", Toast.LENGTH_SHORT).show()
-                loadTransactions()
-                return
-            }
-
-            val transaction = uncategorized[currentIndex]
-            showCategorizationDialog(transaction) {
-                currentIndex++
-                showNextTransaction()
-            }
-        }
-
-        showNextTransaction()
-    }
-
     private fun showCategorizationDialog(transaction: Transaction, onComplete: (() -> Unit)? = null) {
-        val categories = categoryManager.getAllCategories().map { it.name }.toTypedArray()
+        val categories = categoryManager.getAllCategories()
+        val categoryNames = categories.map { it.name }.toMutableList()
+
+        // Añadir opciones especiales al final
+        categoryNames.add("➕ Crear Nueva Categoría")
+        categoryNames.add("⚙️ Gestionar Categorías")
+
+        // Encontrar el índice de la categoría actual
+        val currentIndex = categories.indexOfFirst { it.name == transaction.category }
 
         AlertDialog.Builder(this)
-            .setTitle("Categorizar: ${transaction.concept}")
-            .setMessage("Importe: ${currencyFormat.format(transaction.amount)}\nCategoría actual: ${transaction.category}")
-            .setItems(categories) { _, which ->
-                val selectedCategory = categories[which]
+            .setTitle("Seleccionar Categoría")
+            .setMessage("${transaction.concept}\n${currencyFormat.format(transaction.amount)}\n\n📂 Actual: ${transaction.category}")
+            .setSingleChoiceItems(categoryNames.toTypedArray(), currentIndex) { dialog, which ->
+                when {
+                    which == categoryNames.size - 2 -> {
+                        // Crear nueva categoría
+                        dialog.dismiss()
+                        showAddCategoryDialog { newCategory ->
+                            transactionStorage.updateTransactionCategory(transaction.id, newCategory)
+                            categoryManager.saveRule(transaction.concept, newCategory)
+                            Toast.makeText(this, "✅ Categoría creada: $newCategory", Toast.LENGTH_SHORT).show()
+                            reloadAndComplete(onComplete)
+                        }
+                    }
+                    which == categoryNames.size - 1 -> {
+                        // Gestionar categorías
+                        dialog.dismiss()
+                        showCategoryManagementDialog {
+                            // Después de gestionar, volver a mostrar el diálogo
+                            showCategorizationDialog(transaction, onComplete)
+                        }
+                    }
+                    else -> {
+                        // Categoría normal seleccionada
+                        val selectedCategory = categoryNames[which]
 
-                // Actualizar transacción
-                transactionStorage.updateTransactionCategory(transaction.id, selectedCategory)
+                        transactionStorage.updateTransactionCategory(transaction.id, selectedCategory)
+                        categoryManager.saveRule(transaction.concept, selectedCategory)
 
-                // Guardar regla para futuras transacciones
-                categoryManager.saveRule(transaction.concept, selectedCategory)
+                        Toast.makeText(this, "✅ ${transaction.concept.take(20)}... → $selectedCategory", Toast.LENGTH_SHORT).show()
 
-                Toast.makeText(this, "Categoría actualizada", Toast.LENGTH_SHORT).show()
-                loadTransactions()
+                        dialog.dismiss()
+                        reloadAndComplete(onComplete)
+                    }
+                }
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    private fun reloadAndComplete(onComplete: (() -> Unit)?) {
+        if (showingUncategorizedOnly) {
+            loadUncategorizedTransactions()
+        } else {
+            loadTransactions()
+        }
+        onComplete?.invoke()
+    }
+
+    private fun showCategoryManagementDialog(onClose: (() -> Unit)? = null) {
+        val categories = categoryManager.getAllCategories()
+        val categoryItems = categories.map { category ->
+            val count = transactionStorage.getTransactionsByCategory(category.name).size
+            "${category.name} ($count)"
+        }.toTypedArray()
+
+        AlertDialog.Builder(this)
+            .setTitle("⚙️ Gestionar Categorías")
+            .setItems(categoryItems) { _, which ->
+                val category = categories[which]
+                showCategoryOptionsDialog(category) {
+                    // Volver a mostrar el diálogo de gestión
+                    showCategoryManagementDialog(onClose)
+                }
+            }
+            .setPositiveButton("➕ Nueva") { _, _ ->
+                showAddCategoryDialog {
+                    Toast.makeText(this, "✅ Categoría '$it' creada", Toast.LENGTH_SHORT).show()
+                    showCategoryManagementDialog(onClose)
+                }
+            }
+            .setNegativeButton("Cerrar") { _, _ ->
+                onClose?.invoke()
+            }
+            .show()
+    }
+
+    private fun showCategoryOptionsDialog(category: Category, onComplete: (() -> Unit)? = null) {
+        val transactionCount = transactionStorage.getTransactionsByCategory(category.name).size
+
+        val options = if (category.isDefault) {
+            arrayOf("📊 Ver Transacciones ($transactionCount)")
+        } else {
+            arrayOf(
+                "✏️ Renombrar",
+                "🗑️ Eliminar",
+                "📊 Ver Transacciones ($transactionCount)"
+            )
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(category.name)
+            .setMessage(if (category.isDefault) "(Categoría predeterminada)" else "$transactionCount transacciones")
+            .setItems(options) { _, which ->
+                when {
+                    !category.isDefault && which == 0 -> {
+                        // Renombrar
+                        showRenameCategoryDialog(category, onComplete)
+                    }
+                    !category.isDefault && which == 1 -> {
+                        // Eliminar
+                        showDeleteCategoryDialog(category, onComplete)
+                    }
+                    else -> {
+                        // Ver transacciones (último item)
+                        showCategoryTransactionsDialog(category)
+                        onComplete?.invoke()
+                    }
+                }
+            }
+            .setNegativeButton("Volver") { _, _ ->
                 onComplete?.invoke()
             }
-            .setNeutralButton("Nueva Categoría") { _, _ ->
-                showAddCategoryDialog { newCategory ->
-                    transactionStorage.updateTransactionCategory(transaction.id, newCategory)
-                    categoryManager.saveRule(transaction.concept, newCategory)
-                    Toast.makeText(this, "Categoría creada y asignada", Toast.LENGTH_SHORT).show()
-                    loadTransactions()
+            .show()
+    }
+
+    private fun showRenameCategoryDialog(category: Category, onComplete: (() -> Unit)? = null) {
+        val input = android.widget.EditText(this)
+        input.hint = "Nuevo nombre"
+        input.setText(category.name)
+
+        AlertDialog.Builder(this)
+            .setTitle("Renombrar Categoría")
+            .setMessage("Categoría actual: ${category.name}")
+            .setView(input)
+            .setPositiveButton("Guardar") { _, _ ->
+                val newName = input.text.toString().trim()
+                if (newName.isNotEmpty() && newName != category.name) {
+                    // Verificar que no existe ya
+                    val exists = categoryManager.getAllCategories().any { it.name == newName }
+                    if (exists) {
+                        Toast.makeText(this, "❌ Ya existe una categoría con ese nombre", Toast.LENGTH_SHORT).show()
+                        onComplete?.invoke()
+                    } else {
+                        // Actualizar todas las transacciones
+                        transactionStorage.getTransactionsByCategory(category.name).forEach {
+                            transactionStorage.updateTransactionCategory(it.id, newName)
+                        }
+
+                        // Eliminar categoría antigua y crear nueva
+                        categoryManager.deleteCategory(category.name)
+                        categoryManager.addCategory(newName)
+
+                        Toast.makeText(this, "✅ Renombrada: ${category.name} → $newName", Toast.LENGTH_SHORT).show()
+                        loadTransactions()
+                        onComplete?.invoke()
+                    }
+                } else {
+                    Toast.makeText(this, "❌ Nombre inválido", Toast.LENGTH_SHORT).show()
                     onComplete?.invoke()
                 }
             }
             .setNegativeButton("Cancelar") { _, _ ->
                 onComplete?.invoke()
             }
+            .show()
+    }
+
+    private fun showDeleteCategoryDialog(category: Category, onComplete: (() -> Unit)? = null) {
+        val transactionCount = transactionStorage.getTransactionsByCategory(category.name).size
+
+        AlertDialog.Builder(this)
+            .setTitle("🗑️ Eliminar Categoría")
+            .setMessage("¿Eliminar '${category.name}'?\n\n$transactionCount transacciones se marcarán como 'Sin categoría'")
+            .setPositiveButton("Eliminar") { _, _ ->
+                // Reasignar transacciones
+                transactionStorage.getTransactionsByCategory(category.name).forEach {
+                    transactionStorage.updateTransactionCategory(it.id, "Sin categoría")
+                }
+
+                // Eliminar categoría
+                categoryManager.deleteCategory(category.name)
+                Toast.makeText(this, "✅ Categoría eliminada", Toast.LENGTH_SHORT).show()
+                loadTransactions()
+                onComplete?.invoke()
+            }
+            .setNegativeButton("Cancelar") { _, _ ->
+                onComplete?.invoke()
+            }
+            .show()
+    }
+
+    private fun showCategoryTransactionsDialog(category: Category) {
+        val transactions = transactionStorage.getTransactionsByCategory(category.name).take(15)
+
+        val message = if (transactions.isEmpty()) {
+            "No hay transacciones en esta categoría"
+        } else {
+            buildString {
+                append("Últimas transacciones:\n\n")
+                transactions.forEach {
+                    val date = SimpleDateFormat("dd/MM", Locale.getDefault()).format(it.date)
+                    append("📅 $date - ${it.concept.take(25)}\n")
+                    append("   ${currencyFormat.format(it.amount)}\n\n")
+                }
+
+                val total = transactionStorage.getTransactionsByCategory(category.name).size
+                if (total > 15) {
+                    append("... y ${total - 15} más")
+                }
+            }
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("${category.name}")
+            .setMessage(message)
+            .setPositiveButton("OK", null)
             .show()
     }
 
@@ -245,72 +452,6 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun showCategoriesManager() {
-        val categories = categoryManager.getAllCategories()
-        val categoryNames = categories.map { it.name }.toTypedArray()
-
-        AlertDialog.Builder(this)
-            .setTitle("Gestión de Categorías")
-            .setItems(categoryNames) { _, which ->
-                val category = categories[which]
-                showCategoryOptions(category)
-            }
-            .setPositiveButton("Nueva Categoría") { _, _ ->
-                showAddCategoryDialog {
-                    Toast.makeText(this, "Categoría '$it' creada", Toast.LENGTH_SHORT).show()
-                }
-            }
-            .setNegativeButton("Cerrar", null)
-            .show()
-    }
-
-    private fun showCategoryOptions(category: Category) {
-        val transactionCount = transactionStorage.getTransactionsByCategory(category.name).size
-
-        val message = buildString {
-            append("Categoría: ${category.name}\n")
-            append("Transacciones: $transactionCount\n")
-            if (category.isDefault) {
-                append("\n(Categoría predeterminada)")
-            }
-        }
-
-        val builder = AlertDialog.Builder(this)
-            .setTitle("Opciones de Categoría")
-            .setMessage(message)
-
-        if (!category.isDefault) {
-            builder.setPositiveButton("Eliminar") { _, _ ->
-                showDeleteCategoryConfirmation(category)
-            }
-        }
-
-        builder.setNegativeButton("Cerrar", null)
-            .show()
-    }
-
-    private fun showDeleteCategoryConfirmation(category: Category) {
-        val transactionCount = transactionStorage.getTransactionsByCategory(category.name).size
-
-        AlertDialog.Builder(this)
-            .setTitle("Eliminar Categoría")
-            .setMessage("¿Eliminar '${category.name}'?\n\n$transactionCount transacciones serán marcadas como 'Sin categoría'")
-            .setPositiveButton("Eliminar") { _, _ ->
-                // Reasignar transacciones
-                val transactions = transactionStorage.getTransactionsByCategory(category.name)
-                transactions.forEach {
-                    transactionStorage.updateTransactionCategory(it.id, "Sin categoría")
-                }
-
-                // Eliminar categoría
-                categoryManager.deleteCategory(category.name)
-                Toast.makeText(this, "Categoría eliminada", Toast.LENGTH_SHORT).show()
-                loadTransactions()
-            }
-            .setNegativeButton("Cancelar", null)
-            .show()
-    }
-
     private fun loadTransactions() {
         CoroutineScope(Dispatchers.IO).launch {
             val transactions = transactionStorage.getAllTransactions()
@@ -319,6 +460,14 @@ class MainActivity : AppCompatActivity() {
             withContext(Dispatchers.Main) {
                 adapter.updateTransactions(transactions)
                 updateStatistics(statistics)
+
+                // Actualizar contador del botón
+                val uncategorizedCount = transactionStorage.getUncategorizedTransactions().size
+                if (uncategorizedCount > 0 && !showingUncategorizedOnly) {
+                    btnFilterUncategorized.text = "🔍 Sin Categoría ($uncategorizedCount)"
+                } else if (!showingUncategorizedOnly) {
+                    btnFilterUncategorized.text = "🔍 Sin Categoría"
+                }
             }
         }
     }
@@ -395,7 +544,12 @@ class MainActivity : AppCompatActivity() {
             .setMessage("¿Estás seguro de que quieres eliminar esta transacción?\n\n${transaction.concept}\n${currencyFormat.format(transaction.amount)}")
             .setPositiveButton("Eliminar") { _, _ ->
                 transactionStorage.deleteTransaction(transaction.id)
-                loadTransactions()
+
+                if (showingUncategorizedOnly) {
+                    loadUncategorizedTransactions()
+                } else {
+                    loadTransactions()
+                }
                 Toast.makeText(this, "Transacción eliminada", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Cancelar", null)

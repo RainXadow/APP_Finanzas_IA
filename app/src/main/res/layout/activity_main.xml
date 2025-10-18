@@ -72,32 +72,52 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:layout_marginBottom="16dp">
+        android:layout_marginBottom="8dp">
 
         <Button
             android:id="@+id/btnImportExcel"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="📊 Importar Excel/CSV"
-            android:layout_marginEnd="8dp" />
+            android:text="📊 Importar"
+            android:layout_marginEnd="4dp" />
 
         <Button
-            android:id="@+id/btnCategories"
+            android:id="@+id/btnStatistics"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="🏷️ Categorías"
+            android:text="📈 Estadísticas"
+            android:layout_marginStart="4dp"
             style="@style/Widget.Material3.Button.OutlinedButton" />
 
     </LinearLayout>
 
-    <Button
-        android:id="@+id/btnExport"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="📊 Exportar a Excel"
-        android:layout_marginBottom="16dp" />
+        android:orientation="horizontal"
+        android:layout_marginBottom="16dp">
+
+        <Button
+            android:id="@+id/btnFilterUncategorized"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="🔍 Sin Categoría"
+            android:layout_marginEnd="4dp"
+            style="@style/Widget.Material3.Button.OutlinedButton" />
+
+        <Button
+            android:id="@+id/btnExport"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="💾 Exportar"
+            android:layout_marginStart="4dp"
+            style="@style/Widget.Material3.Button.OutlinedButton" />
+
+    </LinearLayout>
 
     <!-- Lista de transacciones -->
     <TextView
